@@ -1,7 +1,7 @@
 import os
 import time
 import psutil
-from flask import Flask, request, render_template, redirect, url_for, send_file
+from flask import Flask, request, render_template, send_file
 from werkzeug.utils import secure_filename
 from collections import defaultdict, deque
 
@@ -29,6 +29,14 @@ def validate_file(file_path):
         if not line.isdigit() or len(line) != 6:
             raise ValueError(f"Invalid line in file: '{line}'. Each line must be a 6-digit number.")
     return lines
+
+
+def is_sorted(numbers):
+    """Check if the file is already sorted."""
+    for i in range(len(numbers) - 1):
+        if numbers[i][-2:] != numbers[i + 1][:2]:
+            return False
+    return True
 
 
 def build_graph(pieces):
@@ -103,14 +111,30 @@ def index():
         file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         file.save(file_path)
 
-        # Run the sorting logic
+        # Validate and process the file
         try:
+            numbers = validate_file(file_path)
+
+            # Check if already sorted
+            if is_sorted(numbers):
+                merged_sequence = merge_sequence(numbers)
+                return render_template(
+                    'result.html',
+                    total_pieces=len(numbers),
+                    is_valid=True,
+                    merged_sequence=merged_sequence,
+                    execution_time=0.0,
+                    cpu_time=0.0,
+                    memory_used=0.0,
+                    result_file=file_path
+                )
+
+            # Run the sorting logic
             start_time = time.time()
             process = psutil.Process(os.getpid())
             cpu_before = process.cpu_times()
             memory_before = process.memory_info().rss / (1024 ** 2)
 
-            numbers = validate_file(file_path)
             graph = build_graph(numbers)
             start_piece = min((piece for piece, connections in graph.items() if len(connections) == 1), default=numbers[0])
             longest_path = find_longest_path(graph, start_piece)
@@ -152,13 +176,6 @@ def download_file(filename):
     return send_file(filename, as_attachment=True)
 
 
-# Templates
-@app.route('/template')
-def template():
-    return "This would be used for your HTML templates"
-
-
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port)
-
