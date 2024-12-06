@@ -1,11 +1,10 @@
 import os
 import time
 import psutil
-from flask import Flask, request, render_template, send_file
+from flask import Flask, request, render_template, send_file, jsonify, url_for
 from werkzeug.utils import secure_filename
 from collections import defaultdict, deque
 
-# Flask Configuration
 app = Flask(__name__)
 UPLOAD_FOLDER = './uploads'
 RESULT_FOLDER = './results'
@@ -17,7 +16,7 @@ if not os.path.exists(UPLOAD_FOLDER):
 if not os.path.exists(RESULT_FOLDER):
     os.makedirs(RESULT_FOLDER)
 
-# File validation and logic functions
+
 def validate_file(file_path):
     if not file_path.endswith('.txt'):
         raise ValueError("Invalid file format. The file must be a .txt file.")
@@ -32,7 +31,6 @@ def validate_file(file_path):
 
 
 def is_sorted(numbers):
-    """Check if the file is already sorted."""
     for i in range(len(numbers) - 1):
         if numbers[i][-2:] != numbers[i + 1][:2]:
             return False
@@ -98,48 +96,44 @@ def save_sequence_to_file(sequence, output_file_path):
     return output_file_path
 
 
-# Routes
 @app.route('/', methods=['GET', 'POST'])
 def index():
     if request.method == 'POST':
         if 'file' not in request.files:
-            return "No file part"
+            return jsonify({"success": False, "message": "No file part in the request."})
+
         file = request.files['file']
         if file.filename == '':
-            return "No selected file"
+            return jsonify({"success": False, "message": "No file selected."})
+
         filename = secure_filename(file.filename)
         file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         file.save(file_path)
 
-        # Validate and process the file
         try:
             numbers = validate_file(file_path)
 
-            # Check if already sorted
             if is_sorted(numbers):
                 merged_sequence = merge_sequence(numbers)
-                return render_template(
-                    'result.html',
-                    total_pieces=len(numbers),
-                    is_valid=True,
-                    merged_sequence=merged_sequence,
-                    execution_time=0.0,
-                    cpu_time=0.0,
-                    memory_used=0.0,
-                    result_file=file_path
-                )
+                result_file = file_path
+                return jsonify({
+                    "success": True,
+                    "redirect_url": url_for('results', total_pieces=len(numbers),
+                                            merged_sequence=merged_sequence,
+                                            result_file=result_file)
+                })
 
-            # Run the sorting logic
+            # Logic for sorting
             start_time = time.time()
             process = psutil.Process(os.getpid())
             cpu_before = process.cpu_times()
             memory_before = process.memory_info().rss / (1024 ** 2)
 
             graph = build_graph(numbers)
-            start_piece = min((piece for piece, connections in graph.items() if len(connections) == 1), default=numbers[0])
+            start_piece = min((piece for piece, connections in graph.items() if len(connections) == 1),
+                              default=numbers[0])
             longest_path = find_longest_path(graph, start_piece)
             final_sequence = improve_with_remaining(numbers, longest_path)
-            is_valid, error_index = validate_sequence(final_sequence)
             merged_sequence = merge_sequence(final_sequence)
 
             cpu_after = process.cpu_times()
@@ -150,25 +144,39 @@ def index():
             system_cpu_time = cpu_after.system - cpu_before.system
             total_cpu_time = user_cpu_time + system_cpu_time
 
-            # Save the result
-            result_file = save_sequence_to_file(final_sequence, os.path.join(app.config['RESULT_FOLDER'], 'sortedlist.txt'))
-
-            # Render results
-            return render_template(
-                'result.html',
-                total_pieces=len(final_sequence),
-                is_valid=is_valid,
-                merged_sequence=merged_sequence,
-                execution_time=round(end_time - start_time, 2),
-                cpu_time=round(total_cpu_time, 2),
-                memory_used=round(memory_after - memory_before, 2),
-                result_file=result_file
+            result_file = save_sequence_to_file(
+                final_sequence,
+                os.path.join(app.config['RESULT_FOLDER'], 'sortedlist.txt')
             )
 
-        except Exception as e:
-            return str(e)
+            return jsonify({
+                "success": True,
+                "redirect_url": url_for('results', total_pieces=len(final_sequence),
+                                        merged_sequence=merged_sequence,
+                                        execution_time=round(end_time - start_time, 2),
+                                        cpu_time=round(total_cpu_time, 2),
+                                        memory_used=round(memory_after - memory_before, 2),
+                                        result_file=result_file)
+            })
+
+        except ValueError as e:
+            os.remove(file_path)
+            return jsonify({"success": False, "message": str(e)})
 
     return render_template('index.html')
+
+
+@app.route('/results')
+def results():
+    return render_template(
+        'result.html',
+        total_pieces=request.args.get('total_pieces', 0, type=int),
+        merged_sequence=request.args.get('merged_sequence', ""),
+        execution_time=request.args.get('execution_time', 0.0, type=float),
+        cpu_time=request.args.get('cpu_time', 0.0, type=float),
+        memory_used=request.args.get('memory_used', 0.0, type=float),
+        result_file=request.args.get('result_file', "")
+    )
 
 
 @app.route('/download/<path:filename>', methods=['GET'])
