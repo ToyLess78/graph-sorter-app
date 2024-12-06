@@ -139,7 +139,3 @@ Graph Sorter App is a minimalist Flask-based application designed to process fil
 Feel free to fork the repository and submit pull requests for any improvements or additional features.
 
 ## 🎉 Happy Sorting!
-
-```bash
-This README provides a concise overview of your application while maintaining clarity and usability for potential users.
-```
